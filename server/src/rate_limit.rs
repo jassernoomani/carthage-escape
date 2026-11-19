@@ -25,7 +25,9 @@ pub enum Bucket {
 impl Bucket {
     fn limit(self) -> (u32, Duration) {
         match self {
-            Bucket::Join => (10, Duration::from_secs(60)),
+            // A whole classroom shares one school IP (NAT), so this must fit ~30 kids joining at
+            // once. Guessing codes is hopeless anyway: 31^6 ≈ 887M possible codes.
+            Bucket::Join => (60, Duration::from_secs(60)),
             Bucket::Login => (10, Duration::from_secs(60)),
             Bucket::Register => (5, Duration::from_secs(600)),
         }
@@ -107,12 +109,12 @@ mod tests {
         let other: IpAddr = [10, 0, 0, 2].into();
         let t0 = Instant::now();
 
-        for _ in 0..10 {
+        for _ in 0..60 {
             assert!(limiter.allow(Bucket::Join, ip, t0));
         }
         assert!(
             !limiter.allow(Bucket::Join, ip, t0),
-            "11th join in a minute is blocked"
+            "61st join in a minute is blocked"
         );
         assert!(
             limiter.allow(Bucket::Join, other, t0),

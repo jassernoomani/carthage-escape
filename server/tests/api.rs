@@ -274,7 +274,7 @@ async fn players_join_with_code_and_nickname(pool: PgPool) {
 #[sqlx::test]
 async fn join_is_rate_limited(pool: PgPool) {
     let app = common::spawn(pool).await;
-    for _ in 0..10 {
+    for _ in 0..60 {
         assert_eq!(app.join("ZZZZZZ", "Sami").await.status(), 404);
     }
     assert_eq!(
