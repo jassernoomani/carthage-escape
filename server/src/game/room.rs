@@ -3,9 +3,12 @@
 
 use uuid::Uuid;
 
-use super::protocol::{
-    ClientMsg, LobbyPlayer, RoomStatus, RoomSummary, Seq, ServerEnvelope, ServerMsg, WsErrorCode,
-    You,
+use super::{
+    protocol::{
+        ClientMsg, Completion, LobbyPlayer, PuzzleProgress, RoomStatus, RoomSummary, Seq,
+        ServerEnvelope, ServerMsg, WsErrorCode, You,
+    },
+    puzzles::{ActionOutcome, AnyPuzzle, PuzzleAction, PuzzleView, role_for},
 };
 
 /// Identifies one WebSocket connection inside a room.
@@ -67,6 +70,9 @@ pub enum Input {
     Tick,
 }
 
+// `Send` carries a whole message (puzzle views can be a few hundred bytes). Effects only live
+// for the duration of one `apply` call, so boxing every message would cost more than it saves.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     Send {
@@ -120,10 +126,16 @@ pub struct Room {
     ends_at: Option<i64>,
     /// When the last connection dropped (or creation time); `None` while someone is connected.
     empty_since: Option<i64>,
+    /// The puzzle chain, built (deterministically, from the session seed) at creation.
+    puzzles: Vec<AnyPuzzle>,
+    /// Index of the current puzzle in `puzzles`.
+    current: usize,
+    started_at: Option<i64>,
+    completed: Option<Completion>,
 }
 
 impl Room {
-    pub fn new(meta: RoomMeta, now: i64) -> Self {
+    pub fn new(meta: RoomMeta, puzzles: Vec<AnyPuzzle>, now: i64) -> Self {
         Self {
             meta,
             status: RoomStatus::Lobby,
@@ -132,6 +144,10 @@ impl Room {
             seq: 0,
             ends_at: None,
             empty_since: Some(now),
+            puzzles,
+            current: 0,
+            started_at: None,
+            completed: None,
         }
     }
 
@@ -282,6 +298,10 @@ impl Room {
             }
         };
         self.empty_since = None;
+        let view = match &you {
+            You::Player { role_index, .. } => self.view_for_seat(*role_index),
+            You::Host => None,
+        };
         let welcome = ServerMsg::Welcome {
             you,
             room: self.summary(),
@@ -289,6 +309,9 @@ impl Room {
             players: self.lobby_players(),
             ends_at: self.ends_at,
             server_time: now,
+            progress: self.progress(),
+            view,
+            completed: self.completed,
         };
         self.send(conn, welcome, fx);
     }
@@ -387,15 +410,22 @@ impl Room {
                 let ends_at = now + i64::from(self.meta.time_limit_secs) * 1000;
                 self.status = RoomStatus::Running;
                 self.ends_at = Some(ends_at);
+                self.started_at = Some(now);
+                self.current = 0;
                 self.seq += 1;
                 fx.push(Effect::StatusChanged {
                     status: RoomStatus::Running,
                     at_ms: now,
                 });
-                for c in self.all_conns() {
-                    self.send(c, ServerMsg::GameStarted { ends_at }, fx);
+                if let Some(progress) = self.progress() {
+                    self.broadcast(ServerMsg::GameStarted { ends_at, progress }, fx);
                 }
+                self.send_views(fx);
             }
+            ClientMsg::PuzzleAction {
+                puzzle_index,
+                action,
+            } => self.puzzle_action(conn, who, puzzle_index, action, now, fx),
             ClientMsg::HostRemovePlayer { role_index } => {
                 if who != Who::Host {
                     return self.send_error(
@@ -441,7 +471,139 @@ impl Room {
         }
     }
 
+    fn puzzle_action(
+        &mut self,
+        conn: ConnId,
+        who: Who,
+        puzzle_index: u32,
+        action: PuzzleAction,
+        now: i64,
+        fx: &mut Vec<Effect>,
+    ) {
+        let Who::Player(id) = who else {
+            return self.send_error(conn, WsErrorCode::NotPlayer, "Only players can play", fx);
+        };
+        if self.status != RoomStatus::Running {
+            return self.send_error(conn, WsErrorCode::NotRunning, "The game isn't running", fx);
+        }
+        if usize::try_from(puzzle_index).ok() != Some(self.current) {
+            return self.send_error(
+                conn,
+                WsErrorCode::StalePuzzle,
+                "That puzzle is already done",
+                fx,
+            );
+        }
+        let Some((seat, nickname)) = self
+            .players
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| (p.role_index, p.nickname.clone()))
+        else {
+            return;
+        };
+        let role = role_for(seat, self.current, self.meta.players_needed);
+        let Some(puzzle) = self.puzzles.get_mut(self.current) else {
+            return self.send_error(conn, WsErrorCode::NotRunning, "No puzzle to play", fx);
+        };
+        let outcome = match puzzle.apply(role, action) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                return self.send_error(conn, WsErrorCode::InvalidAction, &err.to_string(), fx);
+            }
+        };
+
+        self.seq += 1;
+        self.broadcast(
+            ServerMsg::ActionResult {
+                puzzle_index,
+                outcome,
+                by: nickname,
+            },
+            fx,
+        );
+        if outcome != ActionOutcome::Solved {
+            // Views changed (e.g. the list of tried codes).
+            return self.send_views(fx);
+        }
+
+        let next = self.current + 1;
+        let next_index = (next < self.puzzles.len())
+            .then(|| u32::try_from(next).ok())
+            .flatten();
+        self.broadcast(
+            ServerMsg::PuzzleSolved {
+                puzzle_index,
+                next_index,
+            },
+            fx,
+        );
+        if next_index.is_some() {
+            self.current = next;
+            self.send_views(fx);
+        } else {
+            self.complete(true, now, fx);
+        }
+    }
+
+    /// Ends the game for everyone.
+    fn complete(&mut self, escaped: bool, now: i64, fx: &mut Vec<Effect>) {
+        let elapsed_ms = now - self.started_at.unwrap_or(now);
+        let completion = Completion {
+            escaped,
+            time_secs: u32::try_from(elapsed_ms.max(0) / 1000).unwrap_or(u32::MAX),
+        };
+        self.status = if escaped {
+            RoomStatus::Escaped
+        } else {
+            RoomStatus::Failed
+        };
+        self.completed = Some(completion);
+        fx.push(Effect::StatusChanged {
+            status: self.status,
+            at_ms: now,
+        });
+        self.broadcast(ServerMsg::RoomCompleted(completion), fx);
+    }
+
     // ----- helpers -----
+
+    fn progress(&self) -> Option<PuzzleProgress> {
+        if self.status != RoomStatus::Running {
+            return None;
+        }
+        Some(PuzzleProgress {
+            index: u32::try_from(self.current).ok()?,
+            total: u32::try_from(self.puzzles.len()).ok()?,
+        })
+    }
+
+    /// What the player in `seat` sees of the current puzzle (only while the game runs).
+    fn view_for_seat(&self, seat: u8) -> Option<PuzzleView> {
+        if self.status != RoomStatus::Running {
+            return None;
+        }
+        let role = role_for(seat, self.current, self.meta.players_needed);
+        self.puzzles.get(self.current).map(|p| p.view_for(role))
+    }
+
+    /// Sends every connected player *their own* view of the current puzzle.
+    fn send_views(&self, fx: &mut Vec<Effect>) {
+        let Some(progress) = self.progress() else {
+            return;
+        };
+        for player in &self.players {
+            if let (Some(conn), Some(view)) = (player.conn, self.view_for_seat(player.role_index)) {
+                self.send(conn, ServerMsg::ViewUpdate { progress, view }, fx);
+            }
+        }
+    }
+
+    fn broadcast(&self, msg: ServerMsg, fx: &mut Vec<Effect>) {
+        for c in self.all_conns() {
+            self.send(c, msg.clone(), fx);
+        }
+    }
 
     fn who(&self, conn: ConnId) -> Option<Who> {
         if self.host_conns.contains(&conn) {
@@ -520,10 +682,34 @@ impl Room {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::puzzles::{
+        Difficulty, PuzzleSpec, PuzzleView,
+        lock_and_manual::{self, Action as LockAction, RuleSet, View as LockView},
+    };
 
     const HOST: ConnId = 100;
     const A: ConnId = 1;
     const B: ConnId = 2;
+
+    fn lock_spec() -> PuzzleSpec {
+        PuzzleSpec::LockAndManual(lock_and_manual::Params {
+            digits: 3,
+            rule: RuleSet::SumByColor,
+            difficulty: Difficulty::Easy,
+        })
+    }
+
+    /// A room with a chain of `n` Lock & Manual puzzles.
+    fn room_with_puzzles(n: usize) -> Room {
+        let puzzles = (0..n)
+            .map(|i| AnyPuzzle::init(&lock_spec(), 1000 + i as u64, 2).unwrap())
+            .collect();
+        Room::new(meta(), puzzles, 0)
+    }
+
+    fn new_room() -> Room {
+        room_with_puzzles(1)
+    }
 
     fn meta() -> RoomMeta {
         RoomMeta {
@@ -537,7 +723,7 @@ mod tests {
 
     /// Room with two joined (not yet connected) players. Returns their ids.
     fn room_with_two() -> (Room, Uuid, Uuid) {
-        let mut room = Room::new(meta(), 0);
+        let mut room = new_room();
         let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
         for (id, name) in [(a, "Ali"), (b, "Bea")] {
             let Ok(JoinSlot::New { role_index: role }) = room.check_join(name) else {
@@ -623,7 +809,7 @@ mod tests {
         let (room, _, _) = room_with_two();
         assert_eq!(room.check_join("Cyd"), Err(JoinError::RoomFull));
 
-        let mut room = Room::new(meta(), 0);
+        let mut room = new_room();
         assert_eq!(room.check_join("Ali"), Ok(JoinSlot::New { role_index: 0 }));
         let ali = Uuid::new_v4();
         room.apply(
@@ -838,7 +1024,7 @@ mod tests {
 
     #[test]
     fn start_requires_full_connected_ready_room() {
-        let mut room = Room::new(meta(), 0);
+        let mut room = new_room();
         room.apply(
             Input::Connect {
                 conn: HOST,
@@ -880,13 +1066,16 @@ mod tests {
             at_ms: 1_000
         }));
         let expected_end = 1_000 + 600 * 1000;
-        for conn in [A, B, HOST] {
-            assert_eq!(
-                sent_to(&fx, conn),
-                vec![&ServerMsg::GameStarted {
-                    ends_at: expected_end
-                }]
-            );
+        let started = ServerMsg::GameStarted {
+            ends_at: expected_end,
+            progress: PuzzleProgress { index: 0, total: 1 },
+        };
+        // Everyone hears the start; players then get their own puzzle view, the host none.
+        assert_eq!(sent_to(&fx, HOST), vec![&started]);
+        for conn in [A, B] {
+            let msgs = sent_to(&fx, conn);
+            assert_eq!(msgs.first(), Some(&&started));
+            assert!(matches!(msgs.get(1), Some(ServerMsg::ViewUpdate { .. })));
         }
         // Once started: no more joining, readying, or starting again.
         assert_eq!(room.check_join("Cyd"), Err(JoinError::GameAlreadyStarted));
@@ -972,7 +1161,7 @@ mod tests {
 
     #[test]
     fn idle_room_is_abandoned_only_after_timeout_with_nobody_connected() {
-        let mut room = Room::new(meta(), 0);
+        let mut room = new_room();
         assert!(room.apply(Input::Tick, IDLE_SHUTDOWN_MS - 1).is_empty());
 
         room.apply(
@@ -1003,5 +1192,282 @@ mod tests {
                 Effect::Stop
             ]
         );
+    }
+
+    // ----- M2: puzzles -----
+
+    /// Full room, both ready, game started. Returns the effects of the start.
+    fn started(room: &mut Room) -> Vec<Effect> {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        for (id, name, role_index) in [(a, "Ali", 0), (b, "Bea", 1)] {
+            room.apply(
+                Input::PlayerJoined {
+                    id,
+                    nickname: name.into(),
+                    role_index,
+                },
+                0,
+            );
+        }
+        room.apply(
+            Input::Connect {
+                conn: HOST,
+                who: Who::Host,
+            },
+            1,
+        );
+        room.apply(
+            Input::Connect {
+                conn: A,
+                who: Who::Player(a),
+            },
+            1,
+        );
+        room.apply(
+            Input::Connect {
+                conn: B,
+                who: Who::Player(b),
+            },
+            1,
+        );
+        ready(room, A);
+        ready(room, B);
+        start(room, HOST)
+    }
+
+    fn view_sent_to(fx: &[Effect], conn: ConnId) -> Option<LockView> {
+        sent_to(fx, conn).into_iter().rev().find_map(|m| match m {
+            ServerMsg::ViewUpdate {
+                view: PuzzleView::LockAndManual(v),
+                ..
+            } => Some(v.clone()),
+            ServerMsg::Welcome {
+                view: Some(PuzzleView::LockAndManual(v)),
+                ..
+            } => Some(v.clone()),
+            _ => None,
+        })
+    }
+
+    fn submit(room: &mut Room, conn: ConnId, index: u32, code: Vec<u8>, now: i64) -> Vec<Effect> {
+        room.apply(
+            Input::Client {
+                conn,
+                msg: ClientMsg::PuzzleAction {
+                    puzzle_index: index,
+                    action: PuzzleAction::LockAndManual(LockAction::Submit { code }),
+                },
+            },
+            now,
+        )
+    }
+
+    /// What the kids would work out by talking, from the views they were sent.
+    fn team_code(fx: &[Effect], lock_conn: ConnId, manual_conn: ConnId) -> Vec<u8> {
+        lock_and_manual::code_from_views(
+            &view_sent_to(fx, lock_conn).expect("lock view"),
+            &view_sent_to(fx, manual_conn).expect("manual view"),
+        )
+    }
+
+    #[test]
+    fn start_sends_each_player_their_own_view_and_the_host_none() {
+        let mut room = new_room();
+        let fx = started(&mut room);
+        assert!(
+            matches!(view_sent_to(&fx, A), Some(LockView::Lock { .. })),
+            "seat 0 holds the lock"
+        );
+        assert!(
+            matches!(view_sent_to(&fx, B), Some(LockView::Manual { .. })),
+            "seat 1 reads the manual"
+        );
+        assert!(
+            view_sent_to(&fx, HOST).is_none(),
+            "the host gets no puzzle view"
+        );
+        let progress = sent_to(&fx, A).into_iter().find_map(|m| match m {
+            ServerMsg::ViewUpdate { progress, .. } => Some(*progress),
+            _ => None,
+        });
+        assert_eq!(progress, Some(PuzzleProgress { index: 0, total: 1 }));
+    }
+
+    #[test]
+    fn wrong_code_is_announced_to_everyone_without_the_answer() {
+        let mut room = new_room();
+        let fx = started(&mut room);
+        let code = team_code(&fx, A, B);
+        let wrong: Vec<u8> = code
+            .iter()
+            .map(|d| if *d == 9 { 1 } else { d + 1 })
+            .collect();
+
+        let fx = submit(&mut room, A, 0, wrong.clone(), 5_000);
+        let expected = ServerMsg::ActionResult {
+            puzzle_index: 0,
+            outcome: ActionOutcome::Wrong,
+            by: "Ali".into(),
+        };
+        for conn in [A, B, HOST] {
+            assert!(sent_to(&fx, conn).contains(&&expected));
+        }
+        // Both players see the tried code (to discuss it) in their refreshed views.
+        let Some(LockView::Manual { wrong_attempts, .. }) = view_sent_to(&fx, B) else {
+            panic!("manual view expected");
+        };
+        assert_eq!(wrong_attempts, vec![wrong]);
+        assert_eq!(room.status(), RoomStatus::Running);
+    }
+
+    #[test]
+    fn solving_the_last_puzzle_completes_the_room() {
+        let mut room = new_room();
+        let fx = started(&mut room);
+        let code = team_code(&fx, A, B);
+        let fx = submit(&mut room, A, 0, code, 96_000);
+
+        let solved = ServerMsg::PuzzleSolved {
+            puzzle_index: 0,
+            next_index: None,
+        };
+        let done = ServerMsg::RoomCompleted(Completion {
+            escaped: true,
+            time_secs: 95,
+        });
+        for conn in [A, B, HOST] {
+            let msgs = sent_to(&fx, conn);
+            assert!(msgs.contains(&&solved));
+            assert!(msgs.contains(&&done));
+        }
+        assert_eq!(room.status(), RoomStatus::Escaped);
+        assert!(fx.contains(&Effect::StatusChanged {
+            status: RoomStatus::Escaped,
+            at_ms: 96_000
+        }));
+
+        // Reconnecting after the end shows the result, not a puzzle.
+        room.apply(Input::Disconnect { conn: A }, 97_000);
+        let a_id = room.players[0].id;
+        let fx = room.apply(
+            Input::Connect {
+                conn: 9,
+                who: Who::Player(a_id),
+            },
+            98_000,
+        );
+        assert!(matches!(
+            sent_to(&fx, 9).as_slice(),
+            [ServerMsg::Welcome {
+                view: None,
+                completed: Some(Completion { escaped: true, .. }),
+                ..
+            }]
+        ));
+        // No more actions once it's over.
+        let fx = submit(&mut room, 9, 0, vec![1, 1, 1], 99_000);
+        assert_eq!(error_code(&fx, 9), Some(WsErrorCode::NotRunning));
+    }
+
+    #[test]
+    fn chain_advances_and_roles_rotate() {
+        let mut room = room_with_puzzles(2);
+        let fx = started(&mut room);
+        let fx = submit(&mut room, A, 0, team_code(&fx, A, B), 2_000);
+        let solved_first = ServerMsg::PuzzleSolved {
+            puzzle_index: 0,
+            next_index: Some(1),
+        };
+        assert!(sent_to(&fx, B).contains(&&solved_first));
+        // On puzzle 2 Bea holds the lock and Ali reads the manual.
+        assert!(matches!(view_sent_to(&fx, B), Some(LockView::Lock { .. })));
+        assert!(matches!(
+            view_sent_to(&fx, A),
+            Some(LockView::Manual { .. })
+        ));
+        assert_eq!(room.status(), RoomStatus::Running);
+
+        // A stale click on puzzle 0 is refused; Ali can't submit on puzzle 1 (not the lock holder).
+        let stale = submit(&mut room, A, 0, vec![1, 1, 1], 3_000);
+        assert_eq!(error_code(&stale, A), Some(WsErrorCode::StalePuzzle));
+        let not_lock = submit(&mut room, A, 1, vec![1, 1, 1], 3_000);
+        assert_eq!(error_code(&not_lock, A), Some(WsErrorCode::InvalidAction));
+
+        let code = team_code(&fx, B, A);
+        let fx = submit(&mut room, B, 1, code, 4_000);
+        assert!(
+            sent_to(&fx, A)
+                .iter()
+                .any(|m| matches!(m, ServerMsg::RoomCompleted(_)))
+        );
+    }
+
+    #[test]
+    fn puzzle_actions_are_refused_before_the_start_and_from_the_host() {
+        let (mut room, _, _) = full_room();
+        let early = submit(&mut room, A, 0, vec![1, 1, 1], 5);
+        assert_eq!(error_code(&early, A), Some(WsErrorCode::NotRunning));
+        ready(&mut room, A);
+        ready(&mut room, B);
+        start(&mut room, HOST);
+        let host = submit(&mut room, HOST, 0, vec![1, 1, 1], 5);
+        assert_eq!(error_code(&host, HOST), Some(WsErrorCode::NotPlayer));
+    }
+
+    #[test]
+    fn reconnecting_mid_puzzle_gets_the_view_back() {
+        let mut room = new_room();
+        let fx = started(&mut room);
+        let before = view_sent_to(&fx, B).expect("manual view");
+        room.apply(Input::Disconnect { conn: B }, 10);
+        let b_id = room.players[1].id;
+        let fx = room.apply(
+            Input::Connect {
+                conn: 7,
+                who: Who::Player(b_id),
+            },
+            11,
+        );
+        assert_eq!(view_sent_to(&fx, 7), Some(before));
+    }
+
+    #[test]
+    fn no_message_to_anyone_ever_contains_the_code_before_it_is_solved() {
+        for seed_offset in 0..30u64 {
+            let puzzles = vec![AnyPuzzle::init(&lock_spec(), 5000 + seed_offset, 2).unwrap()];
+            let mut room = Room::new(meta(), puzzles, 0);
+            let mut all = started(&mut room);
+            let code = team_code(&all, A, B);
+            let wrong: Vec<u8> = code
+                .iter()
+                .map(|d| if *d == 1 { 2 } else { d - 1 })
+                .collect();
+            all.extend(submit(&mut room, A, 0, wrong, 50));
+            all.extend(room.apply(Input::Disconnect { conn: B }, 60));
+            let b_id = room.players[1].id;
+            all.extend(room.apply(
+                Input::Connect {
+                    conn: 8,
+                    who: Who::Player(b_id),
+                },
+                70,
+            ));
+
+            let as_array = serde_json::to_string(&code).unwrap();
+            let joined: String = code.iter().map(u8::to_string).collect();
+            for e in &all {
+                if let Effect::Send { conn, msg } = e {
+                    let json = serde_json::to_string(msg).unwrap();
+                    assert!(
+                        !json.contains(&as_array),
+                        "code {as_array} leaked to {conn}: {json}"
+                    );
+                    assert!(
+                        !json.contains(&format!("\"{joined}\"")),
+                        "code leaked to {conn}: {json}"
+                    );
+                }
+            }
+        }
     }
 }

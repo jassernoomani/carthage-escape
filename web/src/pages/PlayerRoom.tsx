@@ -1,6 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import { Navigate, useNavigate } from 'react-router'
-import { ConnectionBanner, Countdown, LobbyStatus, PartnerWaiting, PlayerList } from '../components/room'
+import {
+  CompletionCard,
+  ConnectionBanner,
+  Countdown,
+  LobbyStatus,
+  PartnerWaiting,
+  PlayerList,
+} from '../components/room'
+import { PuzzleStage } from '../puzzles/PuzzleStage'
 import { Button, Card, ErrorText, PageShell } from '../components/ui'
 import { useRoomConnection } from '../hooks/useRoomConnection'
 import { clearPlayerSession, loadPlayerSession } from '../net/playerSession'
@@ -72,13 +80,29 @@ function PlayerRoomInner({ token }: { token: string }) {
           </Button>
           <p className="text-center text-stone-600">{t('lobby.waiting_for_host')}</p>
         </Card>
+      ) : state.completed ? (
+        <Card className="flex flex-col items-center gap-6">
+          <CompletionCard completed={state.completed} />
+          <Button
+            big
+            variant="secondary"
+            onClick={() => {
+              clearPlayerSession()
+              void navigate('/')
+            }}
+          >
+            {t('game.play_again')}
+          </Button>
+        </Card>
       ) : (
-        <Card className="flex flex-col items-center gap-5 text-center">
+        <Card className="flex flex-col gap-5">
           <PartnerWaiting players={players} youRole={you.role_index} />
-          <h2 className="text-3xl font-bold">{t('game.started_title')}</h2>
           {state.endsAt !== null && <Countdown endsAt={state.endsAt} clockOffset={state.clockOffset} />}
-          <PlayerList players={players} needed={room.players_needed} youRole={you.role_index} />
-          <p className="text-lg text-stone-700">{t('game.coming_soon')}</p>
+          {state.progress && state.view ? (
+            <PuzzleStage progress={state.progress} view={state.view} lastResult={state.lastResult} send={send} />
+          ) : (
+            <p className="text-center text-lg text-stone-700">{t('common.loading')}</p>
+          )}
         </Card>
       )}
       <ErrorText>{state.lastError && t(`ws_errors.${state.lastError}`)}</ErrorText>

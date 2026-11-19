@@ -51,7 +51,10 @@ pub async fn list_rooms(
         .into_iter()
         .filter_map(|r| serde_json::from_value::<RoomDefinition>(r.definition).ok())
         .map(|d| RoomTemplateInfo {
-            puzzle_count: u32::try_from(d.puzzles.len()).unwrap_or(u32::MAX),
+            puzzle_count: d
+                .playable_puzzles()
+                .map(|p| u32::try_from(p.len()).unwrap_or(u32::MAX))
+                .unwrap_or(0),
             id: d.id,
             title: d.title,
             theme: d.theme,
@@ -92,6 +95,10 @@ pub async fn create_session(
         .map_err(|e| AppError::Internal(format!("bad stored room definition: {e}")))?;
 
     let seed: i64 = rand::thread_rng().r#gen();
+    // Same bits, unsigned: the puzzle generator's seed type.
+    let puzzles = definition
+        .build_puzzles(seed as u64)
+        .map_err(|e| AppError::Internal(format!("building puzzles for {}: {e}", definition.id)))?;
     let mut created = None;
     for _ in 0..CODE_ATTEMPTS {
         let code = generate_code();
@@ -124,6 +131,7 @@ pub async fn create_session(
             players_needed: definition.players,
             time_limit_secs: definition.time_limit_secs,
         },
+        puzzles,
         state.db.clone(),
     );
     let host_token = state.tokens.sign(host.id, id, &code, TokenKind::Host)?;

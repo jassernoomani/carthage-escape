@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ConnectionBanner, Countdown, LobbyStatus, PlayerList, StatusBadge } from '../components/room'
+import {
+  CompletionCard,
+  ConnectionBanner,
+  Countdown,
+  LobbyStatus,
+  PlayerList,
+  StatusBadge,
+} from '../components/room'
 import { Button, Card, CopyButton, ErrorText, PageShell } from '../components/ui'
 import type { LobbyPlayer } from '../generated/LobbyPlayer'
 import type { SessionDetail } from '../generated/SessionDetail'
@@ -100,11 +107,27 @@ export default function HostSession() {
         </Card>
 
         <Card className="flex flex-col gap-5">
-          {state.status === 'running' ? (
+          {state.completed ? (
+            <>
+              <h2 className="text-2xl font-bold">{t('host.finished_title')}</h2>
+              <CompletionCard completed={state.completed} />
+              <PlayerList players={state.players} needed={needed} showReady={false} />
+            </>
+          ) : state.status === 'running' ? (
             <>
               <h2 className="text-2xl font-bold">{t('host.running_title')}</h2>
+              {state.progress && (
+                <p className="text-lg font-semibold text-amber-800">
+                  {t('game.puzzle_of', { n: state.progress.index + 1, total: state.progress.total })}
+                </p>
+              )}
               {state.endsAt !== null && <Countdown endsAt={state.endsAt} clockOffset={state.clockOffset} />}
-              <PlayerList players={state.players} needed={needed} />
+              <PlayerList players={state.players} needed={needed} showReady={false} />
+              {state.lastResult?.outcome === 'wrong' && (
+                <p className="text-stone-700" role="status">
+                  {t('game.result_wrong_by', { by: state.lastResult.by })}
+                </p>
+              )}
             </>
           ) : (
             <>

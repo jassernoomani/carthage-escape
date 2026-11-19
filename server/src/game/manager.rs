@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::{
     actor::{self, JoinFailure, JoinedPlayer, Outbound, RoomCommand},
+    puzzles::AnyPuzzle,
     room::{ConnId, Input, Room, RoomMeta, Who},
 };
 
@@ -27,7 +28,7 @@ pub struct RoomHandle {
 
 impl RoomManager {
     /// Starts an actor for a freshly created session. The actor removes itself when it stops.
-    pub fn spawn(&self, meta: RoomMeta, db: PgPool) -> RoomHandle {
+    pub fn spawn(&self, meta: RoomMeta, puzzles: Vec<AnyPuzzle>, db: PgPool) -> RoomHandle {
         let (tx, rx) = mpsc::channel(COMMAND_BUFFER);
         let session_id = meta.session_id;
         let code = meta.code.clone();
@@ -36,7 +37,7 @@ impl RoomManager {
 
         let rooms = Arc::clone(&self.rooms);
         tokio::spawn(async move {
-            actor::run(Room::new(meta, actor::now_ms()), db, rx).await;
+            actor::run(Room::new(meta, puzzles, actor::now_ms()), db, rx).await;
             rooms.remove_if(&code, |_, h| h.session_id == session_id);
         });
         handle

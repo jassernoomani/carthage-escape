@@ -47,10 +47,51 @@
     "status_ready": "Everyone is ready!"
   },
   "game": {
-    "started_title": "The adventure begins!",
     "time_left": "Time left",
-    "coming_soon": "The first puzzle is on its way. Stay with your partner!",
-    "waiting_for_partner": "Waiting for {{nickname}} to come back…"
+    "waiting_for_partner": "Waiting for {{nickname}} to come back…",
+    "puzzle_of": "Puzzle {{n}} of {{total}}",
+    "result_wrong": "Not quite! Talk it over with your partner and try again.",
+    "result_wrong_by": "{{by}} tried a code, but the lock didn't open.",
+    "result_solved": "{{by}} opened it! Well done, team!",
+    "escaped_title": "You escaped!",
+    "failed_title": "Time's up!",
+    "escaped_time": "Your team did it in {{time}}.",
+    "failed_text": "The vault stayed shut this time. Great teamwork, try again!",
+    "play_again": "Back to the home page"
+  },
+  "colors": {
+    "red": "red",
+    "blue": "blue",
+    "green": "green",
+    "yellow": "yellow",
+    "purple": "purple",
+    "orange": "orange"
+  },
+  "lock": {
+    "lock_title": "The merchant's lock",
+    "lock_intro": "Only your partner has the manual. Tell them the colors and numbers you see!",
+    "tiles_label": "Tiles on the lock",
+    "code_label": "Enter the code",
+    "digit_label": "Digit {{n}}",
+    "open": "Open the lock",
+    "manual_title": "The merchant's manual",
+    "manual_intro": "Your partner sees the lock. Ask them about the colors and numbers!",
+    "rules_label": "How to find the code",
+    "rule": {
+      "sum": "Digit {{digit}}: add up all the {{color}} numbers.",
+      "count": "Digit {{digit}}: count how many {{color}} tiles there are.",
+      "largest": "Digit {{digit}}: the biggest {{color}} number.",
+      "smallest": "Digit {{digit}}: the smallest {{color}} number."
+    },
+    "tried": "Codes already tried",
+    "unlocked": "Unlocked!"
+  },
+  "hints": {
+    "lock_and_manual": {
+      "hint_1": "The lock holder sees the numbers, the manual reader sees the rules. Read each rule out loud!",
+      "hint_2": "Start with digit {{digit}}: it only uses the {{color}} tiles.",
+      "hint_3": "The code starts like this: {{code}}"
+    }
   },
   "player_fatal": {
     "title": "You left the room",
@@ -94,6 +135,7 @@
     "start_hint_players": "Waiting for players to join.",
     "start_hint_ready": "Waiting for every player to be connected and ready.",
     "running_title": "Game in progress",
+    "finished_title": "Game over",
     "ended": "This game is over.",
     "back_to_games": "Back to your games"
   },
@@ -128,6 +170,9 @@
     "room_not_full": "Waiting for more players.",
     "players_not_ready": "Every player must be connected and ready.",
     "player_not_found": "That player already left.",
+    "not_running": "The game isn't running right now.",
+    "stale_puzzle": "That puzzle is already done. Look at the new one!",
+    "invalid_action": "That didn't work. Check the code and try again.",
     "invalid_token": "Your game pass has expired. Join again with the code and the same nickname.",
     "room_not_found": "This game is closed.",
     "replaced": "You opened this game in another tab or device.",

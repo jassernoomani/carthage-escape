@@ -1,8 +1,10 @@
 import { useTranslation } from 'react-i18next'
+import type { Completion } from '../generated/Completion'
 import type { LobbyPlayer } from '../generated/LobbyPlayer'
 import type { RoomStatus } from '../generated/RoomStatus'
 import { useNow } from '../hooks/useNow'
 import { canStart } from '../lib/lobby'
+import { formatDuration } from '../lib/time'
 import type { ConnectionState } from '../net/socket'
 
 export function PlayerList({
@@ -10,10 +12,13 @@ export function PlayerList({
   needed,
   youRole,
   onRemove,
+  showReady = true,
 }: {
   players: LobbyPlayer[]
   needed: number
   youRole?: number
+  /** Ready badges only mean something in the lobby. */
+  showReady?: boolean
   /** Host only: shows a Remove button per player. */
   onRemove?: (player: LobbyPlayer) => void
 }) {
@@ -40,11 +45,13 @@ export function PlayerList({
               )}
             </span>
             <span className="flex items-center gap-2">
-              <span
-                className={`rounded-full px-3 py-1 text-sm font-semibold ${player.ready ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-700'}`}
-              >
-                {player.ready ? t('lobby.ready') : t('lobby.not_ready')}
-              </span>
+              {showReady && (
+                <span
+                  className={`rounded-full px-3 py-1 text-sm font-semibold ${player.ready ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-700'}`}
+                >
+                  {player.ready ? t('lobby.ready') : t('lobby.not_ready')}
+                </span>
+              )}
               {onRemove && (
                 <button
                   type="button"
@@ -95,6 +102,24 @@ export function Countdown({ endsAt, clockOffset }: { endsAt: number; clockOffset
       <span className="font-mono text-5xl font-bold tabular-nums" role="timer">
         {mm}:{ss}
       </span>
+    </div>
+  )
+}
+
+/** End screen: escaped (with the team's time) or out of time. */
+export function CompletionCard({ completed }: { completed: Completion }) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-col items-center gap-3 text-center" data-testid="completion">
+      <p aria-hidden="true" className="text-6xl">
+        {completed.escaped ? '🗝️' : '⌛'}
+      </p>
+      <h2 className="text-4xl font-bold">{completed.escaped ? t('game.escaped_title') : t('game.failed_title')}</h2>
+      <p className="text-xl text-stone-700">
+        {completed.escaped
+          ? t('game.escaped_time', { time: formatDuration(completed.time_secs) })
+          : t('game.failed_text')}
+      </p>
     </div>
   )
 }

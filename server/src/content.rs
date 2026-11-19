@@ -6,6 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
+use crate::game::puzzles::{AnyPuzzle, PuzzleSpec, puzzle_seed};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomDefinition {
@@ -80,7 +82,41 @@ impl RoomDefinition {
         if self.puzzles.is_empty() {
             return Err("a room needs at least one puzzle".into());
         }
+        // Parses every puzzle's params now, so a typo fails at startup, not mid-game.
+        if self.playable_puzzles()?.is_empty() {
+            return Err("none of this room's puzzle types are implemented yet".into());
+        }
         Ok(())
+    }
+
+    /// The puzzles that can be played, in order. Types from the spec that aren't implemented yet
+    /// are skipped (temporary until all MVP puzzle types exist in M3); unknown types or bad
+    /// params are errors.
+    pub fn playable_puzzles(&self) -> Result<Vec<PuzzleSpec>, String> {
+        let mut specs = Vec::new();
+        for (i, p) in self.puzzles.iter().enumerate() {
+            match PuzzleSpec::parse(&p.kind, &p.params, self.players)
+                .map_err(|e| format!("puzzle #{} ({}): {e}", i + 1, p.kind))?
+            {
+                Some(spec) => specs.push(spec),
+                None => {
+                    tracing::debug!(room = %self.id, kind = %p.kind, "puzzle type not implemented yet; skipped")
+                }
+            }
+        }
+        Ok(specs)
+    }
+
+    /// Builds the live puzzle chain for a session, deterministically from its seed.
+    pub fn build_puzzles(&self, session_seed: u64) -> Result<Vec<AnyPuzzle>, String> {
+        self.playable_puzzles()?
+            .iter()
+            .enumerate()
+            .map(|(i, spec)| {
+                AnyPuzzle::init(spec, puzzle_seed(session_seed, i), self.players)
+                    .map_err(|e| e.to_string())
+            })
+            .collect()
     }
 }
 
@@ -165,12 +201,32 @@ mod tests {
     fn rejects_invalid_rooms() {
         let base =
             "id: x\ntitle: T\ntheme: t\nplayers: 2\ntime_limit_secs: 60\nhint_penalty_secs: 0\n";
-        assert!(RoomDefinition::parse(&format!("{base}puzzles: []"), "t").is_err());
-        assert!(
-            RoomDefinition::parse(&format!("{base}puzzles: [{{type: a}}]\nextra: 1"), "t").is_err()
-        );
+        let lock = "puzzles: [{type: lock_and_manual, params: {digits: 3, rule: sum_by_color, difficulty: easy}}]";
+        assert!(RoomDefinition::parse(&format!("{base}{lock}"), "t").is_ok());
+
+        let reject = |yaml: String, why: &str| {
+            assert!(
+                RoomDefinition::parse(&yaml, "t").is_err(),
+                "should reject: {why}"
+            );
+        };
+        reject(format!("{base}puzzles: []"), "no puzzles");
+        reject(format!("{base}{lock}\nextra: 1"), "unknown field");
         let three = base.replace("players: 2", "players: 3");
-        assert!(RoomDefinition::parse(&format!("{three}puzzles: [{{type: a}}]"), "t").is_err());
-        assert!(RoomDefinition::parse(&format!("{base}puzzles: [{{type: a}}]"), "t").is_ok());
+        reject(format!("{three}{lock}"), "3 players");
+        reject(
+            format!("{base}puzzles: [{{type: made_up}}]"),
+            "unknown puzzle type",
+        );
+        reject(
+            format!(
+                "{base}puzzles: [{{type: lock_and_manual, params: {{digits: 7, rule: sum_by_color, difficulty: easy}}}}]"
+            ),
+            "bad params",
+        );
+        reject(
+            format!("{base}puzzles: [{{type: translator}}]"),
+            "nothing playable yet",
+        );
     }
 }

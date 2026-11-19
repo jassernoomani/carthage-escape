@@ -161,7 +161,8 @@ async fn host_creates_lists_and_views_sessions(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(rooms[0]["id"], "carthage-01");
-    assert_eq!(rooms[0]["puzzle_count"], 5);
+    // Only implemented puzzles count (Lock & Manual for now; the rest arrive in M3).
+    assert_eq!(rooms[0]["puzzle_count"], 1);
 
     let list: Value = client
         .get(app.url("/api/sessions"))
