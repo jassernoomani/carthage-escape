@@ -12,6 +12,8 @@ RUN npm run build
 FROM rust:1-slim-bookworm AS server
 WORKDIR /server
 COPY server/ ./
+# Compile-time-checked queries use the committed .sqlx/ cache instead of a live database.
+ENV SQLX_OFFLINE=true
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/server/target \
     cargo build --release --locked \
@@ -26,7 +28,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=server /carthage-server /app/carthage-server
 COPY --from=web /web/dist /app/public
+COPY content/ /app/content/
 USER app
-ENV BIND_ADDR=0.0.0.0:8080 STATIC_DIR=/app/public
+ENV BIND_ADDR=0.0.0.0:8080 STATIC_DIR=/app/public CONTENT_DIR=/app/content
 EXPOSE 8080
 CMD ["/app/carthage-server"]

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO room_templates (id, title, definition)\n               VALUES ($1, $2, $3)\n               ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, definition = EXCLUDED.definition",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "261d1e1948032d03d2b93ebcda601da86197c3b347a9e2ef786ddb740182f569"
+}

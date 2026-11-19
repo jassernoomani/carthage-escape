@@ -23,7 +23,11 @@ services:
       DATABASE_URL: postgres://carthage:carthage@db:5432/carthage
       BIND_ADDR: 0.0.0.0:8080
       STATIC_DIR: /app/public
+      CONTENT_DIR: /app/content
       RUST_LOG: carthage_server=info,tower_http=info
+      # Local-only default. Production sets a real secret (and COOKIE_SECURE=true behind HTTPS).
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     ports:
       - "8080:8080"
     depends_on:

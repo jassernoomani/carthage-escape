@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.code, t.title AS template_title, s.status AS \"status: RoomStatus\"\n           FROM game_sessions s JOIN room_templates t ON t.id = s.template_id\n           WHERE s.id = $1 AND s.host_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "template_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "status: RoomStatus",
+        "type_info": {
+          "Custom": {
+            "name": "session_status",
+            "kind": {
+              "Enum": [
+                "lobby",
+                "running",
+                "paused",
+                "escaped",
+                "failed",
+                "abandoned"
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a4a9a414f45c5f033ab5ca9c12a1e39190abe1e60772a1700bd8ffdd83718a4e"
+}

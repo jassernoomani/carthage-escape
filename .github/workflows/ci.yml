@@ -27,6 +27,9 @@ jobs:
     env:
       DATABASE_URL: postgres://carthage:carthage@localhost:5432/carthage
       CARGO_TERM_COLOR: always
+      # Compile queries against the committed .sqlx/ cache: fails if someone forgot
+      # `cargo sqlx prepare -- --all-targets` after changing a query.
+      SQLX_OFFLINE: "true"
     defaults:
       run:
         working-directory: server

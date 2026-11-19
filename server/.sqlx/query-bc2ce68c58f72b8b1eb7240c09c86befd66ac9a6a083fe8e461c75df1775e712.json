@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT nickname, role_index FROM session_players ORDER BY role_index",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nickname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "role_index",
+        "type_info": "Int2"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "bc2ce68c58f72b8b1eb7240c09c86befd66ac9a6a083fe8e461c75df1775e712"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE game_sessions SET status = 'abandoned', ended_at = now()\n           WHERE status IN ('lobby', 'running', 'paused')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cf1807be0f337239a7ea23b96a524804f804a82ed8c5001a9dd3295a2322ade6"
+}

@@ -1,13 +1,15 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8080";
+const DEFAULT_CONTENT_DIR: &str = "../content";
+const MIN_JWT_SECRET_LEN: usize = 32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("missing required environment variable {0}")]
     Missing(&'static str),
-    #[error("invalid value for environment variable {name}: {value:?}")]
-    Invalid { name: &'static str, value: String },
+    #[error("invalid value for environment variable {name}: {reason}")]
+    Invalid { name: &'static str, reason: String },
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +18,12 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     /// Directory containing the built frontend. Unset in development (Vite serves it).
     pub static_dir: Option<PathBuf>,
+    /// Directory holding `rooms/*.yaml`.
+    pub content_dir: PathBuf,
+    /// Secret used to sign player/host WebSocket tokens.
+    pub jwt_secret: String,
+    /// Add the `Secure` flag to the session cookie (set in production, behind HTTPS).
+    pub cookie_secure: bool,
 }
 
 impl Config {
@@ -26,17 +34,44 @@ impl Config {
         let bind_raw = env::var("BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_owned());
         let bind_addr = bind_raw.parse().map_err(|_| ConfigError::Invalid {
             name: "BIND_ADDR",
-            value: bind_raw.clone(),
+            reason: format!("{bind_raw:?} is not a socket address"),
         })?;
 
-        let static_dir = env::var_os("STATIC_DIR")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from);
+        let static_dir = non_empty_var("STATIC_DIR").map(PathBuf::from);
+        let content_dir = non_empty_var("CONTENT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONTENT_DIR));
+
+        let jwt_secret = env::var("JWT_SECRET").map_err(|_| ConfigError::Missing("JWT_SECRET"))?;
+        if jwt_secret.len() < MIN_JWT_SECRET_LEN {
+            return Err(ConfigError::Invalid {
+                name: "JWT_SECRET",
+                reason: format!("must be at least {MIN_JWT_SECRET_LEN} bytes"),
+            });
+        }
+
+        let cookie_secure = match non_empty_var("COOKIE_SECURE").as_deref() {
+            None | Some("false" | "0") => false,
+            Some("true" | "1") => true,
+            Some(other) => {
+                return Err(ConfigError::Invalid {
+                    name: "COOKIE_SECURE",
+                    reason: format!("{other:?} is not true/false"),
+                });
+            }
+        };
 
         Ok(Self {
             database_url,
             bind_addr,
             static_dir,
+            content_dir,
+            jwt_secret,
+            cookie_secure,
         })
     }
+}
+
+fn non_empty_var(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.is_empty())
 }

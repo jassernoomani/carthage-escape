@@ -9,7 +9,10 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn get_json(pool: PgPool, uri: &str) -> (StatusCode, Value) {
-    let app = carthage_server::app(AppState { db: pool }, None);
+    let app = carthage_server::app(
+        AppState::new(pool, b"test-secret-test-secret-test-secret!", false),
+        None,
+    );
     let res = app
         .oneshot(Request::get(uri).body(Body::empty()).unwrap())
         .await

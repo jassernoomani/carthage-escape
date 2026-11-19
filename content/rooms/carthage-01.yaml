@@ -1,0 +1,17 @@
+id: carthage-01
+title: "The Merchant's Vault"
+theme: carthage
+players: 2
+time_limit_secs: 1200
+hint_penalty_secs: 60
+puzzles:
+  - type: lock_and_manual
+    params: { digits: 3, rule: "sum_by_color", difficulty: easy }
+  - type: blind_maze
+    params: { width: 6, height: 6 }
+  - type: translator
+    params: { word_count: 4, language: en, symbol_set: punic }
+  - type: balance_scale
+    params: { weights_per_player: 3, target: "equal", allow_fractions: false }
+  - type: timeline
+    params: { deck: carthage_history, cards: 6 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM host_sessions WHERE expires_at <= now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cc564e64d12bfcc6ee4cb4a4ccb33c67168fdf8ff4ff7134648cd1b9ab9399a3"
+}
