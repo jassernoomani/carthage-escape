@@ -8,6 +8,7 @@ use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::extract::ApiJson;
 use crate::{
     AppState,
     auth::{self, HOST_SESSION_TTL_DAYS, HostAuth, HostInfo, SESSION_COOKIE},
@@ -56,7 +57,7 @@ fn normalize_email(email: &str) -> Result<String, AppError> {
 pub async fn register(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
-    Json(req): Json<RegisterRequest>,
+    ApiJson(req): ApiJson<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     state.limiter.check(Bucket::Register, ip)?;
 
@@ -100,11 +101,12 @@ pub async fn register(
 pub async fn login(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
-    Json(req): Json<LoginRequest>,
+    ApiJson(req): ApiJson<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    state.limiter.check(Bucket::Login, ip)?;
-
+    state.limiter.check(Bucket::LoginIp, ip)?;
     let email = req.email.trim().to_lowercase();
+    state.limiter.check(Bucket::LoginAccount, &email)?;
+
     let row = sqlx::query!(
         "SELECT id, email, display_name, password_hash FROM hosts WHERE email = $1",
         email

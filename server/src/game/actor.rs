@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use super::room::{ConnId, Effect, Input, JoinError, Room, Who};
+use super::room::{ConnId, Effect, Input, JoinError, JoinSlot, Room, Who};
 use crate::db;
 
 /// Messages queued for one WebSocket connection's writer task.
@@ -29,6 +29,8 @@ const TICK_INTERVAL: Duration = Duration::from_secs(60);
 pub struct JoinedPlayer {
     pub player_id: Uuid,
     pub role_index: u8,
+    /// The seat's nickname as stored (a reclaim may have been typed in different case).
+    pub nickname: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,14 +118,30 @@ impl Shell {
     }
 
     async fn join(&mut self, nickname: String) -> Result<(JoinedPlayer, bool), JoinFailure> {
-        let role_index = self.room.check_join(&nickname)?;
+        let role_index = match self.room.check_join(&nickname)? {
+            JoinSlot::Reclaim {
+                player_id,
+                role_index,
+            } => {
+                tracing::info!(code = %self.room.meta().code, role_index, "player reclaimed seat");
+                return Ok((
+                    JoinedPlayer {
+                        player_id,
+                        role_index,
+                        nickname: self.room.player_nickname(player_id).unwrap_or(nickname),
+                    },
+                    false,
+                ));
+            }
+            JoinSlot::New { role_index } => role_index,
+        };
         // The actor handles one command at a time, so nobody can take this role meanwhile.
         let player_id =
             db::insert_player(&self.db, self.room.meta().session_id, &nickname, role_index).await?;
         let stop = self
             .process(Input::PlayerJoined {
                 id: player_id,
-                nickname,
+                nickname: nickname.clone(),
                 role_index,
             })
             .await;
@@ -131,6 +149,7 @@ impl Shell {
             JoinedPlayer {
                 player_id,
                 role_index,
+                nickname,
             },
             stop,
         ))
@@ -156,10 +175,10 @@ impl Shell {
                             }
                         };
                         if tx.try_send(Outbound::Text(text)).is_err() {
-                            // Writer gone or hopelessly behind: treat as disconnected.
-                            if let Some(tx) = self.conns.remove(&conn) {
-                                let _ = tx.try_send(Outbound::Close);
-                            }
+                            // Writer gone or hopelessly behind: drop our sender so the socket
+                            // ends *without* the fatal close code (the client may reconnect and
+                            // gets a fresh snapshot), and treat it as disconnected.
+                            self.conns.remove(&conn);
                             queue.push_back(Input::Disconnect { conn });
                         }
                     }
@@ -174,6 +193,11 @@ impl Shell {
                             db::set_session_status(&self.db, session_id, status, at_ms).await
                         {
                             tracing::error!(%err, %session_id, ?status, "saving session status");
+                        }
+                    }
+                    Effect::PlayerRemoved { id } => {
+                        if let Err(err) = db::delete_player(&self.db, id).await {
+                            tracing::error!(%err, %id, "deleting removed player");
                         }
                     }
                     Effect::Stop => stop = true,

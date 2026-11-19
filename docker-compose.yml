@@ -19,6 +19,7 @@ services:
 
   server:
     build: .
+    image: carthage-escape-server:local
     environment:
       DATABASE_URL: postgres://carthage:carthage@db:5432/carthage
       BIND_ADDR: 0.0.0.0:8080

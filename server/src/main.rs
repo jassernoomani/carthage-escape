@@ -49,7 +49,8 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("loading rooms from {}", config.content_dir.display()))?;
     tracing::info!(rooms, "room templates loaded");
 
-    let state = AppState::new(db, config.jwt_secret.as_bytes(), config.cookie_secure);
+    let state = AppState::new(db, config.jwt_secret.as_bytes(), config.cookie_secure)
+        .with_trust_proxy(config.trust_proxy);
     let app = carthage_server::app(state, config.static_dir.as_deref());
 
     let listener = TcpListener::bind(config.bind_addr)

@@ -82,6 +82,10 @@ pub enum Effect {
         status: RoomStatus,
         at_ms: i64,
     },
+    /// Delete this player's row (removed by the host from the lobby).
+    PlayerRemoved {
+        id: Uuid,
+    },
     /// The room is finished; the actor should stop.
     Stop,
 }
@@ -94,6 +98,16 @@ pub enum JoinError {
     NicknameTaken,
     #[error("game already started")]
     GameAlreadyStarted,
+}
+
+/// Outcome of a successful `check_join`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinSlot {
+    /// A new player: save them, then apply `Input::PlayerJoined`.
+    New { role_index: u8 },
+    /// The nickname belongs to a player who is currently disconnected: hand them their seat
+    /// back. This is how a kid who closed the tab (and lost their token) gets back in.
+    Reclaim { player_id: Uuid, role_index: u8 },
 }
 
 #[derive(Debug, Clone)]
@@ -129,23 +143,37 @@ impl Room {
         self.status
     }
 
-    /// Checks whether a player with this (already validated) nickname may join, and returns
-    /// the role index they would get. Does not modify the room: the shell saves the player to
-    /// the DB first, then applies `Input::PlayerJoined`.
-    pub fn check_join(&self, nickname: &str) -> Result<u8, JoinError> {
+    pub fn player_nickname(&self, id: Uuid) -> Option<String> {
+        self.players
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.nickname.clone())
+    }
+
+    /// Checks whether a player with this (already validated) nickname may join. Does not modify
+    /// the room: for a new player the shell saves them to the DB first, then applies
+    /// `Input::PlayerJoined`.
+    pub fn check_join(&self, nickname: &str) -> Result<JoinSlot, JoinError> {
+        let wanted = nickname.to_lowercase();
+        if let Some(existing) = self
+            .players
+            .iter()
+            .find(|p| p.nickname.to_lowercase() == wanted)
+        {
+            if existing.conn.is_some() || !self.status.is_active() {
+                return Err(JoinError::NicknameTaken);
+            }
+            return Ok(JoinSlot::Reclaim {
+                player_id: existing.id,
+                role_index: existing.role_index,
+            });
+        }
         if self.status != RoomStatus::Lobby {
             return Err(JoinError::GameAlreadyStarted);
         }
-        let wanted = nickname.to_lowercase();
-        if self
-            .players
-            .iter()
-            .any(|p| p.nickname.to_lowercase() == wanted)
-        {
-            return Err(JoinError::NicknameTaken);
-        }
         (0..self.meta.players_needed)
             .find(|role| !self.players.iter().any(|p| p.role_index == *role))
+            .map(|role_index| JoinSlot::New { role_index })
             .ok_or(JoinError::RoomFull)
     }
 
@@ -368,6 +396,48 @@ impl Room {
                     self.send(c, ServerMsg::GameStarted { ends_at }, fx);
                 }
             }
+            ClientMsg::HostRemovePlayer { role_index } => {
+                if who != Who::Host {
+                    return self.send_error(
+                        conn,
+                        WsErrorCode::NotHost,
+                        "Only the host can remove players",
+                        fx,
+                    );
+                }
+                if self.status != RoomStatus::Lobby {
+                    return self.send_error(
+                        conn,
+                        WsErrorCode::NotInLobby,
+                        "Players can only be removed before the game starts",
+                        fx,
+                    );
+                }
+                let Some(pos) = self.players.iter().position(|p| p.role_index == role_index) else {
+                    return self.send_error(
+                        conn,
+                        WsErrorCode::PlayerNotFound,
+                        "No player in that seat",
+                        fx,
+                    );
+                };
+                let removed = self.players.remove(pos);
+                if let Some(their_conn) = removed.conn {
+                    self.send_error(
+                        their_conn,
+                        WsErrorCode::Removed,
+                        "The host removed you from this game",
+                        fx,
+                    );
+                    fx.push(Effect::Close { conn: their_conn });
+                }
+                fx.push(Effect::PlayerRemoved { id: removed.id });
+                self.seq += 1;
+                self.broadcast_lobby(None, fx);
+                if self.all_conns().is_empty() {
+                    self.empty_since = Some(now);
+                }
+            }
         }
     }
 
@@ -470,7 +540,9 @@ mod tests {
         let mut room = Room::new(meta(), 0);
         let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
         for (id, name) in [(a, "Ali"), (b, "Bea")] {
-            let role = room.check_join(name).unwrap();
+            let Ok(JoinSlot::New { role_index: role }) = room.check_join(name) else {
+                panic!("{name} should be able to join");
+            };
             room.apply(
                 Input::PlayerJoined {
                     id,
@@ -552,17 +624,107 @@ mod tests {
         assert_eq!(room.check_join("Cyd"), Err(JoinError::RoomFull));
 
         let mut room = Room::new(meta(), 0);
-        assert_eq!(room.check_join("Ali"), Ok(0));
+        assert_eq!(room.check_join("Ali"), Ok(JoinSlot::New { role_index: 0 }));
+        let ali = Uuid::new_v4();
         room.apply(
             Input::PlayerJoined {
-                id: Uuid::new_v4(),
+                id: ali,
                 nickname: "Ali".into(),
                 role_index: 0,
             },
             0,
         );
+        assert_eq!(room.check_join("Bea"), Ok(JoinSlot::New { role_index: 1 }));
+
+        // While Ali is connected, the name is taken (case-insensitive).
+        room.apply(
+            Input::Connect {
+                conn: A,
+                who: Who::Player(ali),
+            },
+            1,
+        );
         assert_eq!(room.check_join("ALI"), Err(JoinError::NicknameTaken));
-        assert_eq!(room.check_join("Bea"), Ok(1));
+    }
+
+    #[test]
+    fn disconnected_player_can_reclaim_their_seat_by_nickname() {
+        let (mut room, a, _) = full_room();
+        ready(&mut room, A);
+        ready(&mut room, B);
+        start(&mut room, HOST);
+
+        // Ali closes the tab (token lost). Typing the same name gives the same seat back,
+        // even though the game has started and the room is full.
+        room.apply(Input::Disconnect { conn: A }, 2_000);
+        assert_eq!(
+            room.check_join("ali"),
+            Ok(JoinSlot::Reclaim {
+                player_id: a,
+                role_index: 0
+            })
+        );
+        // New names are still refused once the game is running.
+        assert_eq!(room.check_join("Cyd"), Err(JoinError::GameAlreadyStarted));
+    }
+
+    #[test]
+    fn host_removes_player_from_lobby() {
+        let (mut room, a, _) = full_room();
+        let remove = |room: &mut Room, conn, role_index| {
+            room.apply(
+                Input::Client {
+                    conn,
+                    msg: ClientMsg::HostRemovePlayer { role_index },
+                },
+                5,
+            )
+        };
+
+        assert_eq!(
+            error_code(&remove(&mut room, B, 0), B),
+            Some(WsErrorCode::NotHost)
+        );
+        assert_eq!(
+            error_code(&remove(&mut room, HOST, 9), HOST),
+            Some(WsErrorCode::PlayerNotFound)
+        );
+
+        let fx = remove(&mut room, HOST, 0);
+        assert_eq!(error_code(&fx, A), Some(WsErrorCode::Removed));
+        assert!(fx.contains(&Effect::Close { conn: A }));
+        assert!(fx.contains(&Effect::PlayerRemoved { id: a }));
+        let lobby = sent_to(&fx, B);
+        assert!(
+            matches!(lobby.as_slice(), [ServerMsg::LobbyUpdate { players }] if players.len() == 1)
+        );
+
+        // The seat is free again, and the old token no longer works.
+        assert_eq!(room.check_join("Cyd"), Ok(JoinSlot::New { role_index: 0 }));
+        let fx = room.apply(
+            Input::Connect {
+                conn: 9,
+                who: Who::Player(a),
+            },
+            6,
+        );
+        assert_eq!(error_code(&fx, 9), Some(WsErrorCode::InvalidToken));
+    }
+
+    #[test]
+    fn players_cannot_be_removed_once_the_game_runs() {
+        let (mut room, _, _) = full_room();
+        ready(&mut room, A);
+        ready(&mut room, B);
+        start(&mut room, HOST);
+        let fx = room.apply(
+            Input::Client {
+                conn: HOST,
+                msg: ClientMsg::HostRemovePlayer { role_index: 0 },
+            },
+            5,
+        );
+        assert_eq!(error_code(&fx, HOST), Some(WsErrorCode::NotInLobby));
     }
 
     #[test]

@@ -9,10 +9,13 @@ export function PlayerList({
   players,
   needed,
   youRole,
+  onRemove,
 }: {
   players: LobbyPlayer[]
   needed: number
   youRole?: number
+  /** Host only: shows a Remove button per player. */
+  onRemove?: (player: LobbyPlayer) => void
 }) {
   const { t } = useTranslation()
   const slots = Array.from({ length: needed }, (_, role) => players.find((p) => p.role_index === role))
@@ -22,23 +25,36 @@ export function PlayerList({
         player ? (
           <li
             key={role}
-            className="flex items-center justify-between gap-3 rounded-2xl bg-amber-100/60 px-4 py-3"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-amber-100/60 px-4 py-3"
             data-testid="player-slot"
           >
             <span className="flex items-center gap-3 text-lg font-semibold">
               <span
+                aria-hidden="true"
                 className={`size-3 rounded-full ${player.connected ? 'bg-emerald-500' : 'bg-stone-400'}`}
-                aria-label={player.connected ? t('lobby.connected') : t('lobby.disconnected')}
               />
+              <span className="sr-only">{player.connected ? t('a11y.online') : t('a11y.offline')}</span>
               {player.nickname}
               {role === youRole && (
                 <span className="rounded-full bg-amber-600 px-2 text-sm text-white">{t('lobby.you_badge')}</span>
               )}
             </span>
-            <span
-              className={`rounded-full px-3 py-1 text-sm font-semibold ${player.ready ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-700'}`}
-            >
-              {player.ready ? t('lobby.ready') : t('lobby.not_ready')}
+            <span className="flex items-center gap-2">
+              <span
+                className={`rounded-full px-3 py-1 text-sm font-semibold ${player.ready ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-700'}`}
+              >
+                {player.ready ? t('lobby.ready') : t('lobby.not_ready')}
+              </span>
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(player)}
+                  aria-label={t('host.remove_player', { nickname: player.nickname })}
+                  className="min-h-11 rounded-xl px-3 text-sm font-semibold text-red-700 underline-offset-4 hover:bg-red-50 hover:underline"
+                >
+                  {t('host.remove')}
+                </button>
+              )}
             </span>
           </li>
         ) : (
@@ -79,6 +95,22 @@ export function Countdown({ endsAt, clockOffset }: { endsAt: number; clockOffset
       <span className="font-mono text-5xl font-bold tabular-nums" role="timer">
         {mm}:{ss}
       </span>
+    </div>
+  )
+}
+
+/** In-game notice when a teammate dropped (spec §7.3: "the partner sees 'Waiting for X…'"). */
+export function PartnerWaiting({ players, youRole }: { players: LobbyPlayer[]; youRole: number }) {
+  const { t } = useTranslation()
+  const away = players.filter((p) => !p.connected && p.role_index !== youRole)
+  if (away.length === 0) return null
+  return (
+    <div role="status" className="flex flex-col gap-1">
+      {away.map((p) => (
+        <p key={p.role_index} className="rounded-xl bg-sky-100 px-4 py-2 text-center font-medium text-sky-900">
+          {t('game.waiting_for_partner', { nickname: p.nickname })}
+        </p>
+      ))}
     </div>
   )
 }

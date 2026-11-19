@@ -234,10 +234,12 @@ async fn players_join_with_code_and_nickname(pool: PgPool) {
     assert_eq!(body["code"], code.as_str());
     assert!(body["player_token"].is_string());
 
-    assert_eq!(
-        code_of(app.join(&code, "yasmine").await).await,
-        (409, "nickname_taken".into())
-    );
+    // Yasmine never connected (e.g. closed the tab right away): the same name gives her seat
+    // back instead of creating a second player. (Taken-while-connected is in ws_lobby.rs.)
+    let res = app.join(&code, "yasmine").await;
+    assert_eq!(res.status(), 200);
+    let again: Value = res.json().await.unwrap();
+    assert_eq!(again["nickname"], "Yasmine", "keeps the original spelling");
     assert_eq!(
         code_of(app.join(&code, "sh1t").await).await,
         (400, "nickname_invalid".into())
@@ -304,4 +306,105 @@ async fn deleting_a_session_closes_the_room(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(res.status(), 404);
+}
+
+#[sqlx::test]
+async fn malformed_input_gets_json_errors(pool: PgPool) {
+    let app = common::spawn(pool).await;
+    let client = app.client();
+
+    let res = client
+        .post(app.url("/api/join"))
+        .header("content-type", "application/json")
+        .body(r#"{"code":"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(code_of(res).await, (400, "validation".into()));
+
+    let res = client
+        .post(app.url("/api/join"))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        code_of(res).await,
+        (400, "validation".into()),
+        "missing content-type"
+    );
+
+    let res = client
+        .post(app.url("/api/join"))
+        .json(&json!({"code": "ABCDEF"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        code_of(res).await,
+        (400, "validation".into()),
+        "missing field"
+    );
+
+    app.register(&client, "h@x.com").await;
+    let res = client
+        .get(app.url("/api/sessions/not-a-uuid"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(code_of(res).await, (400, "validation".into()));
+}
+
+#[sqlx::test]
+async fn security_headers_are_set(pool: PgPool) {
+    let app = common::spawn(pool).await;
+    let res = app
+        .client()
+        .get(app.url("/api/health"))
+        .send()
+        .await
+        .unwrap();
+    let h = res.headers();
+    assert_eq!(h["x-content-type-options"], "nosniff");
+    assert_eq!(h["x-frame-options"], "DENY");
+    assert_eq!(h["referrer-policy"], "no-referrer");
+    assert!(
+        h["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-ancestors 'none'")
+    );
+}
+
+#[sqlx::test]
+async fn password_guessing_is_limited_per_account(pool: PgPool) {
+    let app = common::spawn(pool).await;
+    let client = app.client();
+    app.register(&client, "victim@x.com").await;
+    let attempt = |email: &'static str, password: &'static str| {
+        app.client()
+            .post(app.url("/api/auth/login"))
+            .json(&json!({"email": email, "password": password}))
+            .send()
+    };
+    for _ in 0..10 {
+        assert_eq!(
+            attempt("victim@x.com", "guess").await.unwrap().status(),
+            401
+        );
+    }
+    // The 11th try on this account is refused, even with the right password...
+    assert_eq!(
+        code_of(attempt("VICTIM@x.com", "password123").await.unwrap()).await,
+        (429, "too_many_requests".into())
+    );
+    // ...while other accounts from the same IP are unaffected.
+    app.register(&client, "teacher2@x.com").await;
+    assert_eq!(
+        attempt("teacher2@x.com", "password123")
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
 }

@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router'
 
@@ -61,6 +61,27 @@ export function TextField({
         </p>
       )}
     </div>
+  )
+}
+
+export function CopyButton({ text }: { text: string }) {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  return (
+    <Button
+      variant="secondary"
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+          })
+          .catch(() => undefined)
+      }}
+    >
+      <span aria-live="polite">{copied ? t('host.copied') : t('host.copy_link')}</span>
+    </Button>
   )
 }
 

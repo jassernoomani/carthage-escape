@@ -3,9 +3,30 @@ import { type Browser, type Page, expect, test } from '@playwright/test'
 // M1 "done" scenario: two browser windows join the same room and see each other in the lobby;
 // the host starts the game. Each actor gets its own browser context (separate cookies/storage).
 
+/** Console errors from every page (CSP violations show up here), checked after each test. */
+let consoleErrors: string[] = []
+
+test.beforeEach(() => {
+  consoleErrors = []
+})
+
+test.afterEach(() => {
+  // Expected noise: WebSocket closes during teardown, and the browser logging 4xx responses the
+  // app handles on purpose (logged-out check = 401, "nickname taken" = 409). Anything else,
+  // e.g. a CSP violation ("Refused to load…") or a 5xx, fails the test.
+  const real = consoleErrors.filter(
+    (e) => !/WebSocket/i.test(e) && !/Failed to load resource: the server responded with a status of 4\d\d/.test(e),
+  )
+  expect(real, 'unexpected console errors (e.g. CSP violations)').toEqual([])
+})
+
 async function newPage(browser: Browser): Promise<Page> {
   const context = await browser.newContext()
-  return context.newPage()
+  const page = await context.newPage()
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text())
+  })
+  return page
 }
 
 async function joinAs(page: Page, code: string, nickname: string) {
@@ -72,4 +93,37 @@ test('host creates a game, two players meet in the lobby, host starts it', async
   // Reloading a player's tab keeps them in the game (token survives in sessionStorage).
   await ali.reload()
   await expect(ali.getByRole('heading', { name: 'The adventure begins!' })).toBeVisible()
+
+  // Ali's whole browser closes (token gone). Bea is told to wait...
+  await ali.context().close()
+  await expect(bea.getByText('Waiting for Ali to come back…')).toBeVisible()
+
+  // ...and Ali gets back in from a fresh browser just by typing the same name.
+  const aliAgain = await newPage(browser)
+  await joinAs(aliAgain, code, 'ali')
+  await expect(aliAgain.getByRole('heading', { name: 'The adventure begins!' })).toBeVisible()
+  await expect(aliAgain.getByRole('heading', { name: 'You are Ali' })).toBeVisible()
+  await expect(bea.getByText('Waiting for Ali to come back…')).toBeHidden()
+})
+
+test('host removes a player from the lobby', async ({ browser }) => {
+  const host = await newPage(browser)
+  await host.goto('/host/login')
+  await host.getByRole('button', { name: 'No account yet? Create one' }).click()
+  await host.getByLabel('Your name (shown to you only)').fill('Mr Haddad')
+  await host.getByLabel('Email').fill(`e2e-rm-${Date.now()}@example.com`)
+  await host.getByLabel('Password').fill('password123')
+  await host.getByRole('button', { name: 'Create account' }).click()
+  await host.getByRole('button', { name: 'Create game' }).click()
+  const code = (await host.getByTestId('room-code').textContent())!.trim()
+
+  const kid = await newPage(browser)
+  await joinAs(kid, code, 'Prankster')
+  await expect(host.getByTestId('player-slot')).toHaveCount(1)
+
+  host.once('dialog', (dialog) => void dialog.accept())
+  await host.getByRole('button', { name: 'Remove Prankster' }).click()
+
+  await expect(host.getByTestId('player-slot')).toHaveCount(0)
+  await expect(kid.getByText('The host removed you from this game.')).toBeVisible()
 })

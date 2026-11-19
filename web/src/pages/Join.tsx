@@ -42,7 +42,6 @@ export default function Join() {
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
-            maxLength={6}
             required
             className="font-mono text-2xl tracking-[0.4em] uppercase"
             name="code"

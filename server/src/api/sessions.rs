@@ -1,14 +1,11 @@
-use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
-};
+use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use super::extract::{ApiJson, ApiPath};
 use crate::{
     AppState,
     auth::{HostAuth, TokenKind},
@@ -82,7 +79,7 @@ pub struct CreatedSession {
 pub async fn create_session(
     State(state): State<AppState>,
     HostAuth(host): HostAuth,
-    Json(req): Json<CreateSessionRequest>,
+    ApiJson(req): ApiJson<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<CreatedSession>), AppError> {
     let template = sqlx::query!(
         "SELECT definition FROM room_templates WHERE id = $1",
@@ -199,7 +196,7 @@ pub struct SessionDetail {
 pub async fn get_session(
     State(state): State<AppState>,
     HostAuth(host): HostAuth,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> Result<Json<SessionDetail>, AppError> {
     let row = sqlx::query!(
         r#"SELECT s.code, t.title AS template_title, s.status AS "status: RoomStatus"
@@ -228,7 +225,7 @@ pub async fn get_session(
 pub async fn delete_session(
     State(state): State<AppState>,
     HostAuth(host): HostAuth,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let code = sqlx::query_scalar!(
         "DELETE FROM game_sessions WHERE id = $1 AND host_id = $2 RETURNING code",

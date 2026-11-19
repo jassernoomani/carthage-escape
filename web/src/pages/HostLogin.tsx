@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { Button, Card, ErrorText, PageShell, TextField } from '../components/ui'
@@ -13,6 +13,20 @@ export default function HostLogin() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<ApiErrorKind | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Already logged in (e.g. bookmarked this page): go straight to the dashboard.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .me()
+      .then(() => {
+        if (!cancelled) void navigate('/host', { replace: true })
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [navigate])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()

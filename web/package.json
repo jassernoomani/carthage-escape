@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "e2e": "playwright test",
+    "gen:types": "cargo test --manifest-path ../server/Cargo.toml --lib export_bindings",
     "preview": "vite preview"
   },
   "dependencies": {

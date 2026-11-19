@@ -24,6 +24,8 @@ pub struct Config {
     pub jwt_secret: String,
     /// Add the `Secure` flag to the session cookie (set in production, behind HTTPS).
     pub cookie_secure: bool,
+    /// Running behind one trusted reverse proxy: take the client IP from `X-Forwarded-For`.
+    pub trust_proxy: bool,
 }
 
 impl Config {
@@ -50,28 +52,30 @@ impl Config {
             });
         }
 
-        let cookie_secure = match non_empty_var("COOKIE_SECURE").as_deref() {
-            None | Some("false" | "0") => false,
-            Some("true" | "1") => true,
-            Some(other) => {
-                return Err(ConfigError::Invalid {
-                    name: "COOKIE_SECURE",
-                    reason: format!("{other:?} is not true/false"),
-                });
-            }
-        };
-
         Ok(Self {
             database_url,
             bind_addr,
             static_dir,
             content_dir,
             jwt_secret,
-            cookie_secure,
+            cookie_secure: bool_var("COOKIE_SECURE")?,
+            trust_proxy: bool_var("TRUST_PROXY")?,
         })
     }
 }
 
 fn non_empty_var(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// An optional boolean variable; unset means false.
+fn bool_var(name: &'static str) -> Result<bool, ConfigError> {
+    match non_empty_var(name).as_deref() {
+        None | Some("false" | "0") => Ok(false),
+        Some("true" | "1") => Ok(true),
+        Some(other) => Err(ConfigError::Invalid {
+            name,
+            reason: format!("{other:?} is not true/false"),
+        }),
+    }
 }

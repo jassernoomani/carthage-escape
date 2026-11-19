@@ -2,6 +2,7 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::extract::ApiJson;
 use crate::{
     AppState,
     auth::TokenKind,
@@ -30,7 +31,7 @@ pub struct JoinResponse {
 pub async fn join(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
-    Json(req): Json<JoinRequest>,
+    ApiJson(req): ApiJson<JoinRequest>,
 ) -> Result<Json<JoinResponse>, AppError> {
     state.limiter.check(Bucket::Join, ip)?;
 
@@ -59,6 +60,6 @@ pub async fn join(
     Ok(Json(JoinResponse {
         player_token,
         code,
-        nickname,
+        nickname: joined.nickname,
     }))
 }

@@ -1,4 +1,5 @@
 mod auth;
+mod extract;
 mod health;
 mod join;
 mod sessions;

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Navigate, useNavigate } from 'react-router'
-import { ConnectionBanner, Countdown, LobbyStatus, PlayerList } from '../components/room'
+import { ConnectionBanner, Countdown, LobbyStatus, PartnerWaiting, PlayerList } from '../components/room'
 import { Button, Card, ErrorText, PageShell } from '../components/ui'
 import { useRoomConnection } from '../hooks/useRoomConnection'
 import { clearPlayerSession, loadPlayerSession } from '../net/playerSession'
@@ -74,6 +74,7 @@ function PlayerRoomInner({ token }: { token: string }) {
         </Card>
       ) : (
         <Card className="flex flex-col items-center gap-5 text-center">
+          <PartnerWaiting players={players} youRole={you.role_index} />
           <h2 className="text-3xl font-bold">{t('game.started_title')}</h2>
           {state.endsAt !== null && <Countdown endsAt={state.endsAt} clockOffset={state.clockOffset} />}
           <PlayerList players={players} needed={room.players_needed} youRole={you.role_index} />

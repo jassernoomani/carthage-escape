@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ConnectionBanner, Countdown, LobbyStatus, PlayerList, StatusBadge } from '../components/room'
-import { Button, Card, ErrorText, PageShell } from '../components/ui'
+import { Button, Card, CopyButton, ErrorText, PageShell } from '../components/ui'
+import type { LobbyPlayer } from '../generated/LobbyPlayer'
 import type { SessionDetail } from '../generated/SessionDetail'
 import { useRoomConnection } from '../hooks/useRoomConnection'
 import { canStart } from '../lib/lobby'
@@ -75,6 +76,13 @@ export default function HostSession() {
   const room = state.room
   const needed = room?.players_needed ?? 2
   const joinUrl = `${window.location.host}/join`
+  const joinLink = `${window.location.origin}/join?code=${detail.code}`
+
+  function removePlayer(player: LobbyPlayer) {
+    if (window.confirm(t('host.confirm_remove', { nickname: player.nickname }))) {
+      send({ type: 'host_remove_player', data: { role_index: player.role_index } })
+    }
+  }
 
   return (
     <PageShell wide>
@@ -87,6 +95,7 @@ export default function HostSession() {
             {detail.code}
           </p>
           <p className="text-stone-700">{t('host.session_code_hint', { url: joinUrl })}</p>
+          <CopyButton text={joinLink} />
           <p className="text-lg font-semibold">{room?.title ?? detail.template_title}</p>
         </Card>
 
@@ -100,7 +109,7 @@ export default function HostSession() {
           ) : (
             <>
               <h2 className="text-xl font-bold">{t('lobby.players_title')}</h2>
-              <PlayerList players={state.players} needed={needed} />
+              <PlayerList players={state.players} needed={needed} onRemove={removePlayer} />
               <LobbyStatus players={state.players} needed={needed} />
               <Button
                 big

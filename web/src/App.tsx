@@ -4,6 +4,7 @@ import HostHome from './pages/HostHome'
 import HostLogin from './pages/HostLogin'
 import HostSession from './pages/HostSession'
 import Join from './pages/Join'
+import NotFound from './pages/NotFound'
 import PlayerRoom from './pages/PlayerRoom'
 
 const router = createBrowserRouter([
@@ -13,7 +14,7 @@ const router = createBrowserRouter([
   { path: '/host/login', element: <HostLogin /> },
   { path: '/host', element: <HostHome /> },
   { path: '/host/sessions/:id', element: <HostSession /> },
-  { path: '*', element: <Home /> },
+  { path: '*', element: <NotFound /> },
 ])
 
 export default function App() {

@@ -11,7 +11,14 @@
   },
   "home": {
     "join": "Join a game",
-    "host": "I'm a teacher or parent"
+    "host": "I'm a teacher or parent",
+    "continue": "Back to my game ({{nickname}})",
+    "server_down": "The game server can't be reached right now. Please try again in a moment.",
+    "server_degraded": "The game server is having trouble. Some things may not work."
+  },
+  "not_found": {
+    "title": "This page doesn't exist",
+    "home": "Go to the home page"
   },
   "join": {
     "title": "Join a game",
@@ -42,7 +49,8 @@
   "game": {
     "started_title": "The adventure begins!",
     "time_left": "Time left",
-    "coming_soon": "The first puzzle is on its way. Stay with your partner!"
+    "coming_soon": "The first puzzle is on its way. Stay with your partner!",
+    "waiting_for_partner": "Waiting for {{nickname}} to come back…"
   },
   "player_fatal": {
     "title": "You left the room",
@@ -77,6 +85,11 @@
     "confirm_delete": "Delete this game and everything recorded about it?",
     "session_code_label": "Room code",
     "session_code_hint": "Players open {{url}} and type this code.",
+    "copy_link": "Copy join link",
+    "copied": "Link copied!",
+    "remove": "Remove",
+    "remove_player": "Remove {{nickname}}",
+    "confirm_remove": "Remove {{nickname}} from this game? Their seat becomes free.",
     "start": "Start the game",
     "start_hint_players": "Waiting for players to join.",
     "start_hint_ready": "Waiting for every player to be connected and ready.",
@@ -114,16 +127,15 @@
     "not_in_lobby": "The game has already started.",
     "room_not_full": "Waiting for more players.",
     "players_not_ready": "Every player must be connected and ready.",
-    "invalid_token": "Your game pass has expired. Join again with the code.",
+    "player_not_found": "That player already left.",
+    "invalid_token": "Your game pass has expired. Join again with the code and the same nickname.",
     "room_not_found": "This game is closed.",
     "replaced": "You opened this game in another tab or device.",
-    "room_closed": "The host closed this game."
+    "room_closed": "The host closed this game.",
+    "removed": "The host removed you from this game."
   },
-  "health": {
-    "label": "Server status",
-    "checking": "Checking…",
-    "ok": "All systems go (v{{version}})",
-    "degraded": "Server is up, but the database is not reachable",
-    "unreachable": "Cannot reach the server"
+  "a11y": {
+    "online": "online",
+    "offline": "offline"
   }
 }

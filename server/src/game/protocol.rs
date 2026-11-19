@@ -46,6 +46,10 @@ pub enum ClientMsg {
     },
     /// Host starts the game (all players present and ready).
     HostStart {},
+    /// Host removes a player from the lobby (wrong name, left for good), freeing their slot.
+    HostRemovePlayer {
+        role_index: u8,
+    },
     Heartbeat {},
 }
 
@@ -135,11 +139,13 @@ pub enum WsErrorCode {
     NotInLobby,
     RoomNotFull,
     PlayersNotReady,
+    PlayerNotFound,
     // Fatal: the server closes the socket right after (close code 4000). Don't reconnect.
     InvalidToken,
     RoomNotFound,
     Replaced,
     RoomClosed,
+    Removed,
 }
 
 impl WsErrorCode {
@@ -150,6 +156,7 @@ impl WsErrorCode {
                 | WsErrorCode::RoomNotFound
                 | WsErrorCode::Replaced
                 | WsErrorCode::RoomClosed
+                | WsErrorCode::Removed
         )
     }
 }
@@ -178,6 +185,7 @@ mod tests {
         for msg in [
             ClientMsg::Ready { ready: false },
             ClientMsg::HostStart {},
+            ClientMsg::HostRemovePlayer { role_index: 1 },
             ClientMsg::Heartbeat {},
         ] {
             let text = serde_json::to_string(&msg).unwrap();

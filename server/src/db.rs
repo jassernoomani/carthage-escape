@@ -22,6 +22,13 @@ pub async fn insert_player(
     .await
 }
 
+pub async fn delete_player(db: &PgPool, player_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM session_players WHERE id = $1", player_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// Saves a status change, stamping `started_at` / `ended_at` the first time they apply.
 pub async fn set_session_status(
     db: &PgPool,
