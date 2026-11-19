@@ -1,0 +1,13 @@
+{
+  "app": {
+    "title": "Carthage Escape",
+    "tagline": "A team escape room. Nobody can solve it alone!"
+  },
+  "health": {
+    "label": "Server status",
+    "checking": "Checking…",
+    "ok": "All systems go (v{{version}})",
+    "degraded": "Server is up, but the database is not reachable",
+    "unreachable": "Cannot reach the server"
+  }
+}
